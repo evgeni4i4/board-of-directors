@@ -1,4 +1,4 @@
-import { auth, currentUser } from "@clerk/nextjs/server";
+import { getAuth } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
 import { getSubscription } from "@/lib/supabase/queries";
@@ -6,13 +6,20 @@ import { getSubscription } from "@/lib/supabase/queries";
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
 export async function POST(req: Request) {
-  const { userId } = await auth();
+  const { userId } = await getAuth();
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const user = await currentUser();
-  const email = user?.emailAddresses?.[0]?.emailAddress;
+  // Try to get email from Clerk if available
+  let email: string | undefined;
+  try {
+    const { currentUser } = await import("@clerk/nextjs/server");
+    const user = await currentUser();
+    email = user?.emailAddresses?.[0]?.emailAddress;
+  } catch {
+    // Clerk not configured — skip email
+  }
 
   const body = await req.json();
   const interval = body.interval === "annual" ? "annual" : "monthly";

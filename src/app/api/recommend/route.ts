@@ -1,10 +1,10 @@
-import { auth } from "@clerk/nextjs/server";
+import { getAuth } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import { recommendAdvisors } from "@/lib/ai/recommend";
 import { buildAdvisorRosterString, ADVISORS } from "@/data/advisors";
 
 export async function POST(req: Request) {
-  const { userId } = await auth();
+  const { userId } = await getAuth();
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

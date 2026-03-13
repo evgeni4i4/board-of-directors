@@ -1,4 +1,4 @@
-import { auth } from "@clerk/nextjs/server";
+import { getAuth } from "@/lib/auth";
 import { getAnthropicClient, MODELS } from "@/lib/ai/client";
 import { ADVISOR_SYSTEM_PROMPTS } from "@/lib/ai/prompts/system-prompts";
 import { generateSynthesis } from "@/lib/ai/synthesize";
@@ -14,7 +14,7 @@ export const runtime = "nodejs";
 export const maxDuration = 120;
 
 export async function GET(req: Request) {
-  const { userId } = await auth();
+  const { userId } = await getAuth();
   if (!userId) {
     return new Response("Unauthorized", { status: 401 });
   }
