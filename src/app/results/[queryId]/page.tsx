@@ -6,9 +6,9 @@ import { Navbar } from "@/components/landing/navbar";
 import { useAdvisorStream } from "@/hooks/useAdvisorStream";
 import { ADVISORS, CATEGORIES } from "@/data/advisors";
 import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
 import Link from "next/link";
@@ -18,6 +18,9 @@ import {
   ArrowRight,
   Share2,
   MessageSquare,
+  AlertCircle,
+  RefreshCw,
+  WifiOff,
 } from "lucide-react";
 
 interface QueryData {
@@ -43,21 +46,29 @@ export default function ResultsPage() {
     ResponseData[] | null
   >(null);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   // Fetch query data
   useEffect(() => {
     async function fetchQuery() {
       try {
         const res = await fetch(`/api/query/${queryId}`);
+        if (res.status === 401) {
+          window.location.href = "/sign-in";
+          return;
+        }
         if (res.ok) {
           const data = await res.json();
           setQuery(data.query);
           if (data.query.status === "complete") {
             setExistingResponses(data.responses);
           }
+        } else {
+          setFetchError("Could not load this query.");
         }
       } catch {
-        // ignore
+        setFetchError("Network error. Check your connection.");
       } finally {
         setLoading(false);
       }
@@ -68,11 +79,18 @@ export default function ResultsPage() {
   const shouldStream =
     query && query.status !== "complete" && query.status !== "error";
 
-  const { advisorStates, currentAdvisorSlug, synthesis, status } =
+  const { advisorStates, currentAdvisorSlug, synthesis, status, error, retry } =
     useAdvisorStream(
       shouldStream ? queryId : null,
       (query?.advisor_slugs as string[]) || []
     );
+
+  // Track page view
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.plausible) {
+      window.plausible("results_viewed", { props: { queryId } });
+    }
+  }, [queryId]);
 
   if (loading) {
     return (
@@ -84,6 +102,27 @@ export default function ResultsPage() {
           {[1, 2, 3].map((i) => (
             <Skeleton key={i} className="mb-4 h-48 w-full rounded-xl" />
           ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (fetchError) {
+    return (
+      <div className="min-h-screen bg-white">
+        <Navbar />
+        <div className="mx-auto max-w-4xl px-4 py-24 text-center sm:px-6">
+          <WifiOff className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
+          <h1 className="text-2xl font-bold">Something went wrong</h1>
+          <p className="mt-2 text-muted-foreground">{fetchError}</p>
+          <Button
+            onClick={() => window.location.reload()}
+            variant="outline"
+            className="mt-6"
+          >
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Try again
+          </Button>
         </div>
       </div>
     );
@@ -130,7 +169,7 @@ export default function ResultsPage() {
         </div>
 
         {/* Progress indicator */}
-        {!isComplete && (
+        {!isComplete && status !== "error" && (
           <div className="mb-8 flex items-center gap-3 rounded-lg border border-border bg-zinc-50 px-4 py-3">
             <Loader2 className="h-4 w-4 animate-spin text-zinc-500" />
             <span className="text-sm text-muted-foreground">
@@ -140,6 +179,25 @@ export default function ResultsPage() {
                 `${ADVISORS.find((a) => a.slug === currentAdvisorSlug)?.name} is thinking...`}
               {status === "synthesizing" && "Synthesizing all perspectives..."}
             </span>
+          </div>
+        )}
+
+        {/* Error banner with retry */}
+        {status === "error" && error && (
+          <div className="mb-8 flex flex-col gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
+              <span className="text-sm text-destructive">{error}</span>
+            </div>
+            <Button
+              onClick={retry}
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+            >
+              <RefreshCw className="mr-2 h-3 w-3" />
+              Retry
+            </Button>
           </div>
         )}
 
@@ -168,7 +226,7 @@ export default function ResultsPage() {
               >
                 {/* Card header */}
                 <div
-                  className="flex items-center gap-3 border-b px-5 py-3"
+                  className="flex items-center gap-3 border-b px-4 py-3 sm:px-5"
                   style={{
                     backgroundColor: `${advisor.accentColor}08`,
                     borderBottomColor: `${advisor.accentColor}20`,
@@ -185,13 +243,13 @@ export default function ResultsPage() {
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-semibold">{advisor.name}</div>
-                    <div className="text-xs text-muted-foreground">
+                    <div className="truncate text-xs text-muted-foreground">
                       {advisor.title}
                     </div>
                   </div>
                   <Badge
                     variant="secondary"
-                    className="text-[10px]"
+                    className="hidden text-[10px] sm:inline-flex"
                     style={{
                       backgroundColor: `${advisor.accentColor}10`,
                       color: advisor.accentColor,
@@ -200,20 +258,28 @@ export default function ResultsPage() {
                     {CATEGORIES[advisor.category].label}
                   </Badge>
                   {cardStatus === "complete" && (
-                    <CheckCircle2 className="h-4 w-4 text-green-500" />
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-green-500" />
                   )}
                   {cardStatus === "streaming" && (
-                    <Loader2 className="h-4 w-4 animate-spin text-zinc-400" />
+                    <Loader2 className="h-4 w-4 shrink-0 animate-spin text-zinc-400" />
+                  )}
+                  {cardStatus === "error" && (
+                    <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
                   )}
                 </div>
 
                 {/* Card body */}
-                <div className="px-5 py-4">
+                <div className="px-4 py-4 sm:px-5">
                   {cardStatus === "idle" ? (
                     <div className="space-y-2">
                       <Skeleton className="h-4 w-full" />
                       <Skeleton className="h-4 w-4/5" />
                       <Skeleton className="h-4 w-3/5" />
+                    </div>
+                  ) : cardStatus === "error" ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <AlertCircle className="h-4 w-4" />
+                      This advisor couldn&apos;t respond. Other advisors will continue.
                     </div>
                   ) : (
                     <div className="prose prose-sm prose-zinc max-w-none">
@@ -230,7 +296,7 @@ export default function ResultsPage() {
         {displaySynthesis && (
           <>
             <Separator className="my-8" />
-            <div className="rounded-xl border-2 border-zinc-200 bg-zinc-50 p-6">
+            <div className="rounded-xl border-2 border-zinc-200 bg-zinc-50 p-4 sm:p-6">
               <h2 className="mb-4 text-lg font-bold">Board Synthesis</h2>
               <div className="prose prose-sm prose-zinc max-w-none">
                 <ReactMarkdown>{displaySynthesis}</ReactMarkdown>
@@ -244,7 +310,7 @@ export default function ResultsPage() {
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
             <Link
               href="/ask"
-              className={cn(buttonVariants(), "gap-2")}
+              className={cn(buttonVariants(), "h-11 gap-2")}
             >
               Ask another question
               <ArrowRight className="h-4 w-4" />
@@ -252,14 +318,19 @@ export default function ResultsPage() {
             <button
               onClick={() => {
                 navigator.clipboard.writeText(window.location.href);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+                if (typeof window !== "undefined" && window.plausible) {
+                  window.plausible("share_clicked", { props: { source: "results" } });
+                }
               }}
               className={cn(
                 buttonVariants({ variant: "outline" }),
-                "gap-2"
+                "h-11 gap-2"
               )}
             >
               <Share2 className="h-4 w-4" />
-              Share results
+              {copied ? "Link copied!" : "Share results"}
             </button>
           </div>
         )}

@@ -62,62 +62,70 @@ export async function GET(req: Request) {
             advisorName: advisor.name,
           });
 
-          const startTime = Date.now();
-          let fullContent = "";
+          try {
+            const startTime = Date.now();
+            let fullContent = "";
 
-          const client = getAnthropicClient();
-          const stream = await client.messages.stream({
-            model,
-            max_tokens: 1024,
-            system: systemPrompt,
-            messages: [{ role: "user", content: query.question }],
-          });
+            const client = getAnthropicClient();
+            const stream = await client.messages.stream({
+              model,
+              max_tokens: 1024,
+              system: systemPrompt,
+              messages: [{ role: "user", content: query.question }],
+            });
 
-          for await (const event of stream) {
-            if (
-              event.type === "content_block_delta" &&
-              event.delta.type === "text_delta"
-            ) {
-              fullContent += event.delta.text;
-              send("advisor_chunk", {
-                advisorSlug: advisor.slug,
-                content: event.delta.text,
-              });
+            for await (const event of stream) {
+              if (
+                event.type === "content_block_delta" &&
+                event.delta.type === "text_delta"
+              ) {
+                fullContent += event.delta.text;
+                send("advisor_chunk", {
+                  advisorSlug: advisor.slug,
+                  content: event.delta.text,
+                });
+              }
             }
+
+            const generationTimeMs = Date.now() - startTime;
+            const finalMessage = await stream.finalMessage();
+
+            // Extract a compelling quote (first sentence or two)
+            const sentences = fullContent.split(/(?<=[.!?])\s+/);
+            const quote =
+              sentences.length > 1
+                ? sentences.slice(0, 2).join(" ")
+                : sentences[0] || "";
+
+            await createResponse(
+              queryId,
+              advisor.slug,
+              fullContent,
+              quote.slice(0, 200),
+              generationTimeMs,
+              {
+                input_tokens: finalMessage.usage.input_tokens,
+                output_tokens: finalMessage.usage.output_tokens,
+              }
+            );
+
+            send("advisor_complete", {
+              advisorSlug: advisor.slug,
+              content: fullContent,
+              quote: quote.slice(0, 200),
+            });
+
+            allResponses.push({
+              advisorName: advisor.name,
+              content: fullContent,
+            });
+          } catch (advisorError) {
+            console.error(`Error generating response for ${advisor.slug}:`, advisorError);
+            send("advisor_error", {
+              advisorSlug: advisor.slug,
+              error: "Failed to generate response",
+            });
           }
-
-          const generationTimeMs = Date.now() - startTime;
-          const finalMessage = await stream.finalMessage();
-
-          // Extract a compelling quote (first sentence or two)
-          const sentences = fullContent.split(/(?<=[.!?])\s+/);
-          const quote =
-            sentences.length > 1
-              ? sentences.slice(0, 2).join(" ")
-              : sentences[0] || "";
-
-          await createResponse(
-            queryId,
-            advisor.slug,
-            fullContent,
-            quote.slice(0, 200),
-            generationTimeMs,
-            {
-              input_tokens: finalMessage.usage.input_tokens,
-              output_tokens: finalMessage.usage.output_tokens,
-            }
-          );
-
-          send("advisor_complete", {
-            advisorSlug: advisor.slug,
-            content: fullContent,
-            quote: quote.slice(0, 200),
-          });
-
-          allResponses.push({
-            advisorName: advisor.name,
-            content: fullContent,
-          });
         }
 
         // Generate synthesis

@@ -30,6 +30,9 @@ export default function PricingPage() {
       window.location.href = "/sign-up";
       return;
     }
+    if (typeof window !== "undefined" && window.plausible) {
+      window.plausible("upgrade_clicked", { props: { source: "pricing", interval } });
+    }
     setLoading(interval);
     try {
       const res = await fetch("/api/checkout", {
@@ -61,10 +64,10 @@ export default function PricingPage() {
           </p>
 
           {/* Annual toggle */}
-          <div className="mt-6 inline-flex items-center gap-3 rounded-full border border-border bg-zinc-50 p-1">
+          <div className="mt-6 inline-flex items-center gap-1 rounded-full border border-border bg-zinc-50 p-1">
             <button
               onClick={() => setAnnual(false)}
-              className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
+              className={`rounded-full px-5 py-2 text-sm font-medium transition-colors ${
                 !annual ? "bg-white shadow-sm" : "text-muted-foreground"
               }`}
             >
@@ -72,7 +75,7 @@ export default function PricingPage() {
             </button>
             <button
               onClick={() => setAnnual(true)}
-              className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
+              className={`rounded-full px-5 py-2 text-sm font-medium transition-colors ${
                 annual ? "bg-white shadow-sm" : "text-muted-foreground"
               }`}
             >

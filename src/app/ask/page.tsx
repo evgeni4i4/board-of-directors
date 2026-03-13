@@ -3,13 +3,15 @@
 import { useState, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Navbar } from "@/components/landing/navbar";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ADVISORS, CATEGORIES } from "@/data/advisors";
-import type { Advisor, AdvisorCategory } from "@/types";
-import { ArrowRight, X, Lock, Loader2 } from "lucide-react";
+import type { AdvisorCategory } from "@/types";
+import { cn } from "@/lib/utils";
+import Link from "next/link";
+import { ArrowRight, X, Lock, Loader2, AlertCircle, Sparkles } from "lucide-react";
 
 export default function AskPage() {
   const router = useRouter();
@@ -29,14 +31,25 @@ export default function AskPage() {
     queriesLimit: number | null;
     advisorsPerQuery: number;
   } | null>(null);
+  const [usageLoading, setUsageLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isRateLimited, setIsRateLimited] = useState(false);
 
   // Fetch usage on mount
   useEffect(() => {
     fetch("/api/usage")
-      .then((r) => r.json())
-      .then(setUsage)
-      .catch(() => {});
+      .then((r) => {
+        if (r.status === 401) {
+          window.location.href = "/sign-in";
+          return null;
+        }
+        return r.json();
+      })
+      .then((data) => {
+        if (data) setUsage(data);
+      })
+      .catch(() => {})
+      .finally(() => setUsageLoading(false));
   }, []);
 
   // Auto-recommend on question change (debounced)
@@ -70,6 +83,12 @@ export default function AskPage() {
               recs.slice(0, maxAdvisors).map((r: { slug: string }) => r.slug)
             );
           }
+          // Track recommendation
+          if (typeof window !== "undefined" && window.plausible) {
+            window.plausible("advisor_recommended", {
+              props: { advisors: recs.map((r: { slug: string }) => r.slug).join(",") },
+            });
+          }
         }
       } catch {
         // ignore
@@ -83,6 +102,10 @@ export default function AskPage() {
 
   const maxAdvisors = usage?.advisorsPerQuery ?? 2;
   const isPro = usage?.plan === "pro";
+  const atLimit =
+    usage !== null &&
+    usage.queriesLimit !== null &&
+    usage.queriesUsed >= usage.queriesLimit;
 
   const toggleAdvisor = useCallback(
     (slug: string) => {
@@ -97,6 +120,7 @@ export default function AskPage() {
 
   const handleSubmit = async () => {
     setError(null);
+    setIsRateLimited(false);
     setSubmitting(true);
     try {
       const res = await fetch("/api/query", {
@@ -104,14 +128,36 @@ export default function AskPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question, advisorSlugs: selectedSlugs }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error);
+
+      if (res.status === 401) {
+        window.location.href = "/sign-in";
         return;
       }
+
+      const data = await res.json();
+      if (!res.ok) {
+        if (res.status === 429 || data.error?.includes("limit")) {
+          setIsRateLimited(true);
+          setError("You've reached your free query limit for this week.");
+        } else {
+          setError(data.error || "Something went wrong. Please try again.");
+        }
+        return;
+      }
+
+      // Track query submission
+      if (typeof window !== "undefined" && window.plausible) {
+        window.plausible("query_submitted", {
+          props: {
+            advisorCount: String(selectedSlugs.length),
+            plan: usage?.plan || "free",
+          },
+        });
+      }
+
       router.push(`/results/${data.queryId}`);
     } catch {
-      setError("Something went wrong. Please try again.");
+      setError("Network error. Check your connection and try again.");
     } finally {
       setSubmitting(false);
     }
@@ -133,19 +179,29 @@ export default function AskPage() {
         </p>
 
         {/* Usage indicator */}
-        {usage && usage.queriesLimit !== null && (
-          <div className="mb-6 rounded-lg border border-border bg-zinc-50 px-4 py-2 text-sm text-muted-foreground">
+        {usageLoading ? (
+          <Skeleton className="mb-6 h-10 w-full rounded-lg" />
+        ) : usage && usage.queriesLimit !== null ? (
+          <div
+            className={cn(
+              "mb-6 rounded-lg border px-4 py-2.5 text-sm",
+              atLimit
+                ? "border-amber-200 bg-amber-50 text-amber-800"
+                : "border-border bg-zinc-50 text-muted-foreground"
+            )}
+          >
             {usage.queriesUsed}/{usage.queriesLimit} free queries used this week
-            {usage.queriesUsed >= (usage.queriesLimit ?? 0) && (
-              <span className="ml-2 font-medium text-destructive">
-                — Limit reached.{" "}
-                <a href="/pricing" className="underline">
+            {atLimit && (
+              <span className="ml-2 font-medium">
+                —{" "}
+                <Link href="/pricing" className="underline hover:no-underline">
                   Upgrade to Pro
-                </a>
+                </Link>{" "}
+                for unlimited queries
               </span>
             )}
           </div>
-        )}
+        ) : null}
 
         {/* Question input */}
         <div className="mb-8">
@@ -164,12 +220,13 @@ export default function AskPage() {
         {/* Recommended advisors */}
         {recommending && (
           <div className="mb-6">
-            <p className="mb-3 text-sm font-medium text-muted-foreground">
+            <p className="mb-3 flex items-center gap-2 text-sm font-medium text-muted-foreground">
+              <Sparkles className="h-3.5 w-3.5" />
               Finding the best advisors...
             </p>
-            <div className="flex gap-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:gap-3">
               {[1, 2, 3].map((i) => (
-                <Skeleton key={i} className="h-16 w-40 rounded-lg" />
+                <Skeleton key={i} className="h-16 w-full rounded-lg sm:w-40" />
               ))}
             </div>
           </div>
@@ -178,7 +235,7 @@ export default function AskPage() {
         {recommended.length > 0 && !recommending && (
           <div className="mb-6">
             <p className="mb-3 text-sm font-medium">Recommended for you:</p>
-            <div className="flex flex-wrap gap-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:gap-3">
               {recommended.map((rec) => {
                 const advisor = ADVISORS.find((a) => a.slug === rec.slug);
                 if (!advisor) return null;
@@ -187,7 +244,7 @@ export default function AskPage() {
                   <button
                     key={rec.slug}
                     onClick={() => toggleAdvisor(rec.slug)}
-                    className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-left transition-all ${
+                    className={`flex items-center gap-2 rounded-lg border px-3 py-3 text-left transition-all sm:py-2 ${
                       isSelected
                         ? "border-zinc-900 bg-zinc-900 text-white"
                         : "border-border hover:border-zinc-400"
@@ -251,10 +308,10 @@ export default function AskPage() {
         {/* Full advisor grid */}
         <div className="mb-8">
           <p className="mb-3 text-sm font-medium">Or pick manually:</p>
-          <div className="mb-4 flex flex-wrap gap-1.5">
+          <div className="-mx-4 mb-4 flex gap-1.5 overflow-x-auto px-4 pb-2 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
             <button
               onClick={() => setCategoryFilter("all")}
-              className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+              className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
                 categoryFilter === "all"
                   ? "bg-zinc-900 text-white"
                   : "bg-zinc-100 text-muted-foreground hover:bg-zinc-200"
@@ -266,7 +323,7 @@ export default function AskPage() {
               <button
                 key={key}
                 onClick={() => setCategoryFilter(key as AdvisorCategory)}
-                className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
                   categoryFilter === key
                     ? "bg-zinc-900 text-white"
                     : "bg-zinc-100 text-muted-foreground hover:bg-zinc-200"
@@ -277,7 +334,7 @@ export default function AskPage() {
             ))}
           </div>
 
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
             {filteredAdvisors.map((advisor) => {
               const isSelected = selectedSlugs.includes(advisor.slug);
               const isLocked = !isPro && advisor.tier === "pro";
@@ -290,7 +347,7 @@ export default function AskPage() {
                   key={advisor.slug}
                   onClick={() => !isLocked && toggleAdvisor(advisor.slug)}
                   disabled={isDisabled && !isSelected}
-                  className={`relative flex items-center gap-2 rounded-lg border p-2 text-left transition-all ${
+                  className={`relative flex items-center gap-2 rounded-lg border p-2.5 text-left transition-all ${
                     isSelected
                       ? "border-zinc-900 bg-zinc-50"
                       : isDisabled
@@ -324,10 +381,48 @@ export default function AskPage() {
           </div>
         </div>
 
+        {/* Rate limit upgrade prompt */}
+        {isRateLimited && (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+              <div>
+                <p className="font-medium text-amber-800">
+                  Weekly limit reached
+                </p>
+                <p className="mt-1 text-sm text-amber-700">
+                  Free accounts get 3 queries per week. Upgrade to Pro for
+                  unlimited queries, more advisors, and the best AI model.
+                </p>
+                <Link
+                  href="/pricing"
+                  className={cn(
+                    buttonVariants({ size: "sm" }),
+                    "mt-3"
+                  )}
+                  onClick={() => {
+                    if (typeof window !== "undefined" && window.plausible) {
+                      window.plausible("upgrade_clicked", {
+                        props: { source: "rate_limit" },
+                      });
+                    }
+                  }}
+                >
+                  Upgrade to Pro
+                  <ArrowRight className="ml-1 h-3 w-3" />
+                </Link>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Error message */}
-        {error && (
-          <div className="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-2 text-sm text-destructive">
-            {error}
+        {error && !isRateLimited && (
+          <div className="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-2.5 text-sm text-destructive">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              {error}
+            </div>
           </div>
         )}
 
@@ -337,7 +432,8 @@ export default function AskPage() {
           disabled={
             submitting ||
             question.trim().length < 10 ||
-            selectedSlugs.length === 0
+            selectedSlugs.length === 0 ||
+            atLimit
           }
           className="h-12 w-full text-base sm:w-auto sm:px-8"
         >

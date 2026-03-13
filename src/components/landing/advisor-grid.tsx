@@ -35,12 +35,12 @@ export function AdvisorGrid() {
         </div>
 
         {/* Category tabs */}
-        <div className="mb-8 flex flex-wrap justify-center gap-2">
+        <div className="-mx-4 mb-8 flex gap-2 overflow-x-auto px-4 pb-2 sm:mx-0 sm:flex-wrap sm:justify-center sm:overflow-visible sm:px-0 sm:pb-0">
           {ALL_CATEGORIES.map((cat) => (
             <button
               key={cat.key}
               onClick={() => setFilter(cat.key)}
-              className={`rounded-full border px-4 py-1.5 text-sm font-medium transition-colors ${
+              className={`shrink-0 rounded-full border px-4 py-1.5 text-sm font-medium transition-colors ${
                 filter === cat.key
                   ? "border-zinc-900 bg-zinc-900 text-white"
                   : "border-border bg-white text-muted-foreground hover:border-zinc-400 hover:text-foreground"

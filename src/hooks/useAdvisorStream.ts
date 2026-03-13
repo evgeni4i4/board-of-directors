@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
 export interface AdvisorStreamState {
   status: "idle" | "connecting" | "streaming" | "complete" | "error";
@@ -14,7 +14,10 @@ export interface UseAdvisorStreamReturn {
   synthesis: string | null;
   status: "idle" | "connecting" | "streaming" | "synthesizing" | "complete" | "error";
   error: string | null;
+  retry: () => void;
 }
+
+const MAX_RETRIES = 2;
 
 export function useAdvisorStream(
   queryId: string | null,
@@ -30,8 +33,10 @@ export function useAdvisorStream(
   const [status, setStatus] = useState<UseAdvisorStreamReturn["status"]>("idle");
   const [error, setError] = useState<string | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const retriesRef = useRef(0);
+  const [retryCount, setRetryCount] = useState(0);
 
-  useEffect(() => {
+  const connect = useCallback(() => {
     if (!queryId) return;
 
     // Initialize advisor states
@@ -41,6 +46,7 @@ export function useAdvisorStream(
     }
     setAdvisorStates(initial);
     setStatus("connecting");
+    setError(null);
 
     const es = new EventSource(`/api/generate?queryId=${queryId}`);
     eventSourceRef.current = es;
@@ -78,6 +84,18 @@ export function useAdvisorStream(
       }));
     });
 
+    es.addEventListener("advisor_error", (e) => {
+      const data = JSON.parse(e.data);
+      setAdvisorStates((prev) => ({
+        ...prev,
+        [data.advisorSlug]: {
+          status: "error",
+          content: "",
+          quote: null,
+        },
+      }));
+    });
+
     es.addEventListener("synthesis_start", () => {
       setStatus("synthesizing");
       setCurrentAdvisorSlug(null);
@@ -90,6 +108,7 @@ export function useAdvisorStream(
 
     es.addEventListener("done", () => {
       setStatus("complete");
+      retriesRef.current = 0;
       es.close();
     });
 
@@ -103,17 +122,38 @@ export function useAdvisorStream(
     });
 
     es.onerror = () => {
-      // EventSource auto-reconnects; only handle if readyState is CLOSED
       if (es.readyState === EventSource.CLOSED) {
-        setStatus("error");
-        setError("Connection lost");
+        // Auto-retry with limit
+        if (retriesRef.current < MAX_RETRIES) {
+          retriesRef.current += 1;
+          setStatus("connecting");
+          setError("Connection lost. Retrying...");
+          setTimeout(() => connect(), 2000);
+        } else {
+          setStatus("error");
+          setError("Connection lost. Please try again.");
+        }
       }
     };
 
     return () => {
       es.close();
     };
-  }, [queryId, advisorSlugs.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [queryId, advisorSlugs]);
 
-  return { advisorStates, currentAdvisorSlug, synthesis, status, error };
+  useEffect(() => {
+    const cleanup = connect();
+    return () => {
+      cleanup?.();
+      eventSourceRef.current?.close();
+    };
+  }, [connect, retryCount]);
+
+  const retry = useCallback(() => {
+    retriesRef.current = 0;
+    eventSourceRef.current?.close();
+    setRetryCount((c) => c + 1);
+  }, []);
+
+  return { advisorStates, currentAdvisorSlug, synthesis, status, error, retry };
 }

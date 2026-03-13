@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import { ClerkProvider } from "@clerk/nextjs";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
@@ -13,6 +14,8 @@ const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
 });
+
+const PLAUSIBLE_DOMAIN = process.env.NEXT_PUBLIC_PLAUSIBLE_DOMAIN;
 
 export const metadata: Metadata = {
   title: "Board of Directors — AI Advisory Tool",
@@ -42,6 +45,14 @@ export default function RootLayout({
         >
           {children}
           <Toaster />
+          {PLAUSIBLE_DOMAIN && (
+            <Script
+              defer
+              data-domain={PLAUSIBLE_DOMAIN}
+              src="https://plausible.io/js/script.js"
+              strategy="afterInteractive"
+            />
+          )}
         </body>
       </html>
     </ClerkProvider>
