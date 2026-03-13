@@ -79,8 +79,16 @@ export default function AskPage() {
           // Auto-select recommended advisors if none selected
           if (selectedSlugs.length === 0) {
             const maxAdvisors = usage?.advisorsPerQuery ?? 2;
+            const userIsPro = usage?.plan === "pro";
+            // Filter out pro-only advisors for free users
+            const selectable = userIsPro
+              ? recs
+              : recs.filter((r: { slug: string }) => {
+                  const adv = ADVISORS.find((a) => a.slug === r.slug);
+                  return adv?.tier !== "pro";
+                });
             setSelectedSlugs(
-              recs.slice(0, maxAdvisors).map((r: { slug: string }) => r.slug)
+              selectable.slice(0, maxAdvisors).map((r: { slug: string }) => r.slug)
             );
           }
           // Track recommendation
@@ -240,14 +248,18 @@ export default function AskPage() {
                 const advisor = ADVISORS.find((a) => a.slug === rec.slug);
                 if (!advisor) return null;
                 const isSelected = selectedSlugs.includes(rec.slug);
+                const isLocked = !isPro && advisor.tier === "pro";
                 return (
                   <button
                     key={rec.slug}
-                    onClick={() => toggleAdvisor(rec.slug)}
-                    className={`flex items-center gap-2 rounded-lg border px-3 py-3 text-left transition-all sm:py-2 ${
+                    onClick={() => !isLocked && toggleAdvisor(rec.slug)}
+                    disabled={isLocked}
+                    className={`relative flex items-center gap-2 rounded-lg border px-3 py-3 text-left transition-all sm:py-2 ${
                       isSelected
                         ? "border-zinc-900 bg-zinc-900 text-white"
-                        : "border-border hover:border-zinc-400"
+                        : isLocked
+                          ? "cursor-not-allowed border-border opacity-60"
+                          : "border-border hover:border-zinc-400"
                     }`}
                   >
                     <div
@@ -260,12 +272,19 @@ export default function AskPage() {
                         .join("")}
                     </div>
                     <div>
-                      <div className="text-sm font-medium">{advisor.name}</div>
+                      <div className="text-sm font-medium">
+                        {advisor.name}
+                        {isLocked && <Lock className="ml-1 inline h-3 w-3 text-muted-foreground" />}
+                      </div>
                       <div
                         className={`text-xs ${isSelected ? "text-white/70" : "text-muted-foreground"}`}
                       >
-                        {rec.reason.slice(0, 50)}
-                        {rec.reason.length > 50 ? "..." : ""}
+                        {isLocked ? "Pro only" : (
+                          <>
+                            {rec.reason.slice(0, 50)}
+                            {rec.reason.length > 50 ? "..." : ""}
+                          </>
+                        )}
                       </div>
                     </div>
                   </button>
